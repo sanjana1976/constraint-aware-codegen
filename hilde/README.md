@@ -18,7 +18,8 @@ HILDE (Human-in-the-Loop Decoding) addresses the problem of AI over-reliance by 
 2. **VS Code Extension**: Provides inline highlighting and alternative selection
 3. **Suffix Preservation**: Maintains code consistency when alternatives are selected
 4. **Security Integration**: Background security scanning with Semgrep/Bandit
-5. **Analytics**: Comprehensive logging and user behavior insights
+5. **Constraint-Aware Debugging**: Real-time constraint violation detection and explanation
+6. **Analytics**: Comprehensive logging and user behavior insights
 
 ## Features
 
@@ -31,6 +32,12 @@ HILDE (Human-in-the-Loop Decoding) addresses the problem of AI over-reliance by 
 - **Proactive Prevention**: Identifies security implications before code is written
 - **Background Scanning**: Automatic security analysis after completion acceptance
 - **Best Practice Guidance**: Explains why certain alternatives are more secure
+
+### 🛡️ Constraint-Aware Debugging
+- **Custom Rule Definition**: Define coding constraints in JSON configuration
+- **Real-time Violation Detection**: AST-based parsing for Python, regex fallback for other languages
+- **Human-readable Explanations**: Natural language explanations suitable for VS Code display
+- **Integrated Workflow**: Constraint violations included in completion responses
 
 ### 📊 Human-in-the-Loop Analytics
 - **Decision Tracking**: Monitors user choices and decision-making patterns
@@ -111,6 +118,42 @@ services:
 - **Intentional Mode**: More highlights, detailed explanations
 - **Efficient Mode**: Fewer highlights, streamlined interface
 
+### Constraint Configuration
+Define coding constraints in `constraints.json`:
+
+```json
+{
+  "constraints": {
+    "no_global_vars": {
+      "enabled": true,
+      "description": "Prevent global variable declarations",
+      "severity": "warning",
+      "message": "Global variables can cause hidden side effects."
+    },
+    "sanitize_inputs": {
+      "enabled": true,
+      "description": "Ensure user inputs are properly sanitized",
+      "severity": "error",
+      "message": "User inputs should be sanitized to prevent injection attacks."
+    },
+    "disallow_raw_sql": {
+      "enabled": true,
+      "description": "Prevent raw SQL queries without parameterization",
+      "severity": "error",
+      "message": "Raw SQL queries are vulnerable to SQL injection attacks."
+    }
+  }
+}
+```
+
+**Available Constraints:**
+- `no_global_vars`: Prevent global variable declarations
+- `sanitize_inputs`: Ensure input sanitization
+- `disallow_raw_sql`: Prevent raw SQL queries
+- `no_hardcoded_secrets`: Prevent hardcoded credentials
+- `require_error_handling`: Require proper error handling
+- `require_type_hints`: Require type annotations (Python)
+
 ## API Reference
 
 ### Main Endpoint
@@ -132,7 +175,26 @@ POST /hilde/completion
   "tokens": [...],
   "top_k_tokens": [...],
   "corrected_entropy_scores": [0.8, 0.2, 0.1],
-  "highlighted_positions": [0, 25]
+  "highlighted_positions": [0, 25],
+  "constraint_violations": [
+    {
+      "rule": "no_global_vars",
+      "line": 12,
+      "column": 0,
+      "explanation": "This code defines a global variable, which can cause hidden side effects.",
+      "severity": "warning",
+      "code_snippet": "global_var = 'value'"
+    }
+  ]
+}
+```
+
+### Constraint Checking Endpoint
+```http
+POST /constraints
+{
+  "code": "def process_data():\n    global_var = 'value'",
+  "language": "python"
 }
 ```
 

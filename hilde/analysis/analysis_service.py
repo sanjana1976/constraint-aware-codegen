@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import openai
 from dotenv import load_dotenv
+from constraint_debugger import ConstraintDebugger, ConstraintViolation
 
 # Load environment variables
 load_dotenv()
@@ -40,9 +41,26 @@ class AnalysisResponse(BaseModel):
     category: str  # "Significant", "Minor", or "Incorrect"
     importance_score: float  # 0.0 to 1.0
 
+class ConstraintCheckRequest(BaseModel):
+    code: str
+    language: str = "python"
+
+class ConstraintViolationResponse(BaseModel):
+    rule: str
+    line: int
+    column: int
+    explanation: str
+    severity: str
+    code_snippet: str
+
+class ConstraintCheckResponse(BaseModel):
+    violations: List[ConstraintViolationResponse]
+    summary: Dict[str, Any]
+
 class HILDEAnalysisEngine:
     def __init__(self):
         self.model = "gpt-4o-mini"  # Using GPT-4o-mini as a proxy for GPT-4.1-nano
+        self.constraint_debugger = ConstraintDebugger()
     
     def analyze_token_alternative(self, request: AnalysisRequest) -> AnalysisResponse:
         """Analyze a token alternative and provide structured explanation"""
@@ -147,6 +165,45 @@ Provide your analysis in this exact JSON format:
             category="Minor",
             importance_score=0.2
         )
+    
+    def check_constraints(self, request: ConstraintCheckRequest) -> ConstraintCheckResponse:
+        """Check code for constraint violations"""
+        try:
+            # Analyze code for constraint violations
+            violations = self.constraint_debugger.analyze_code(request.code, request.language)
+            
+            # Convert violations to response format
+            violation_responses = []
+            for violation in violations:
+                violation_responses.append(ConstraintViolationResponse(
+                    rule=violation.rule,
+                    line=violation.line,
+                    column=violation.column,
+                    explanation=violation.explanation,
+                    severity=violation.severity,
+                    code_snippet=violation.code_snippet
+                ))
+            
+            # Get summary
+            summary = self.constraint_debugger.get_violations_summary()
+            
+            return ConstraintCheckResponse(
+                violations=violation_responses,
+                summary=summary
+            )
+            
+        except Exception as e:
+            logger.error(f"Constraint checking failed: {e}")
+            return ConstraintCheckResponse(
+                violations=[],
+                summary={
+                    "total_violations": 0,
+                    "by_severity": {},
+                    "by_rule": {},
+                    "status": "error",
+                    "error": str(e)
+                }
+            )
 
 # Initialize the analysis engine
 analysis_engine = HILDEAnalysisEngine()
@@ -155,6 +212,11 @@ analysis_engine = HILDEAnalysisEngine()
 async def analyze_token_alternative(request: AnalysisRequest):
     """Analyze a token alternative and provide structured explanation"""
     return analysis_engine.analyze_token_alternative(request)
+
+@app.post("/constraints", response_model=ConstraintCheckResponse)
+async def check_constraints(request: ConstraintCheckRequest):
+    """Check code for constraint violations"""
+    return analysis_engine.check_constraints(request)
 
 @app.get("/health")
 async def health_check():

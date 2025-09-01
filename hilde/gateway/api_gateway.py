@@ -37,12 +37,21 @@ class TokenAlternative(BaseModel):
     log_prob: float
     analysis: Optional[Dict[str, Any]] = None
 
+class ConstraintViolation(BaseModel):
+    rule: str
+    line: int
+    column: int
+    explanation: str
+    severity: str
+    code_snippet: str
+
 class HILDECompletionResponse(BaseModel):
     completion: str
     tokens: List[TokenAlternative]
     top_k_tokens: List[List[TokenAlternative]]
     corrected_entropy_scores: List[float]
     highlighted_positions: List[int]
+    constraint_violations: List[ConstraintViolation] = []
 
 class HILDEGateway:
     def __init__(self):
@@ -59,7 +68,13 @@ class HILDEGateway:
             if request.enable_analysis:
                 await self._analyze_alternatives(completion_response)
             
-            # Step 3: Calculate corrected entropy and identify highlights
+            # Step 3: Check constraints on the generated code
+            constraint_violations = await self._check_constraints(
+                completion_response["completion"], 
+                "python"  # Default to python, could be made configurable
+            )
+            
+            # Step 4: Calculate corrected entropy and identify highlights
             corrected_entropy = self._calculate_corrected_entropy(completion_response)
             highlighted_positions = self._identify_highlights(corrected_entropy)
             
@@ -68,7 +83,8 @@ class HILDEGateway:
                 tokens=completion_response["tokens"],
                 top_k_tokens=completion_response["top_k_tokens"],
                 corrected_entropy_scores=corrected_entropy,
-                highlighted_positions=highlighted_positions
+                highlighted_positions=highlighted_positions,
+                constraint_violations=constraint_violations
             )
             
         except Exception as e:
@@ -163,6 +179,37 @@ class HILDEGateway:
     def _identify_highlights(self, corrected_entropy: List[float], threshold: float = 0.3) -> List[int]:
         """Identify positions that should be highlighted"""
         return [i for i, entropy in enumerate(corrected_entropy) if entropy > threshold]
+    
+    async def _check_constraints(self, code: str, language: str) -> List[ConstraintViolation]:
+        """Check code for constraint violations"""
+        try:
+            response = await self.analysis_client.post(
+                f"{ANALYSIS_SERVICE_URL}/constraints",
+                json={
+                    "code": code,
+                    "language": language
+                }
+            )
+            response.raise_for_status()
+            constraint_data = response.json()
+            
+            # Convert to ConstraintViolation objects
+            violations = []
+            for violation in constraint_data.get("violations", []):
+                violations.append(ConstraintViolation(
+                    rule=violation["rule"],
+                    line=violation["line"],
+                    column=violation["column"],
+                    explanation=violation["explanation"],
+                    severity=violation["severity"],
+                    code_snippet=violation["code_snippet"]
+                ))
+            
+            return violations
+            
+        except Exception as e:
+            logger.warning(f"Constraint checking failed: {e}")
+            return []
 
 # Initialize the gateway
 gateway = HILDEGateway()
