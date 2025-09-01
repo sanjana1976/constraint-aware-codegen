@@ -1,0 +1,67 @@
+{
+  "name": "hilde-assistant",
+  "displayName": "HILDE Assistant",
+  "description": "Human-in-the-Loop Decoding for AI Code Generation",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:hilde.start",
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hilde.start",
+        "title": "Start HILDE Assistant"
+      },
+      {
+        "command": "hilde.toggleMode",
+        "title": "Toggle HILDE Mode"
+      }
+    ],
+    "configuration": {
+      "title": "HILDE Assistant",
+      "properties": {
+        "hilde.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "HILDE API Gateway URL"
+        },
+        "hilde.highlightThreshold": {
+          "type": "number",
+          "default": 0.3,
+          "description": "Entropy threshold for highlighting"
+        },
+        "hilde.mode": {
+          "type": "string",
+          "enum": ["intentional", "efficient"],
+          "default": "intentional",
+          "description": "HILDE operation mode"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.60.0",
+    "@types/node": "^16.0.0",
+    "typescript": "^4.5.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
