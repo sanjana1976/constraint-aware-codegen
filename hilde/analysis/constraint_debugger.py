@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 HILDE Constraint-Aware Debugging Module
-Analyzes code for constraint violations and provides human-readable explanations
+Focused static code analysis tool for Python code
+Analyzes code for specific rule violations using AST parsing
 """
 
 import ast
-import re
 import json
-import os
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,94 +21,37 @@ class ConstraintViolation:
     code_snippet: str
 
 class ConstraintDebugger:
-    def __init__(self, constraints_file: str = "constraints.json"):
-        self.constraints_file = constraints_file
-        self.constraints = self._load_constraints()
+    def __init__(self):
         self.violations = []
+        self.max_function_length = 20  # Configurable limit for function length
     
-    def _load_constraints(self) -> Dict[str, Any]:
-        """Load constraints from JSON file"""
-        try:
-            constraints_path = Path(self.constraints_file)
-            if not constraints_path.exists():
-                # Create default constraints file
-                self._create_default_constraints()
-            
-            with open(constraints_path, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading constraints: {e}")
-            return {"constraints": {}}
-    
-    def _create_default_constraints(self):
-        """Create default constraints file if it doesn't exist"""
-        default_constraints = {
-            "constraints": {
-                "no_global_vars": {
-                    "enabled": True,
-                    "description": "Prevent global variable declarations",
-                    "severity": "warning",
-                    "message": "Global variables can cause hidden side effects and make code harder to test and maintain."
-                },
-                "sanitize_inputs": {
-                    "enabled": True,
-                    "description": "Ensure user inputs are properly sanitized",
-                    "severity": "error",
-                    "message": "User inputs should be sanitized to prevent injection attacks and data corruption."
-                }
-            }
-        }
-        
-        with open(self.constraints_file, 'w') as f:
-            json.dump(default_constraints, f, indent=2)
-    
-    def analyze_code(self, code: str, language: str = "python") -> List[ConstraintViolation]:
+    def analyze_code(self, code: str) -> List[ConstraintViolation]:
         """
-        Analyze code for constraint violations
+        Analyze Python code for constraint violations
         
         Args:
-            code: The code to analyze
-            language: Programming language of the code
+            code: The Python code to analyze
             
         Returns:
             List of constraint violations found
         """
         self.violations = []
-        
-        if language.lower() == "python":
-            self._analyze_python_code(code)
-        elif language.lower() in ["javascript", "js"]:
-            self._analyze_javascript_code(code)
-        elif language.lower() in ["typescript", "ts"]:
-            self._analyze_typescript_code(code)
-        else:
-            # Fallback to regex-based analysis
-            self._analyze_generic_code(code, language)
-        
+        self._analyze_python_code(code)
         return self.violations
     
     def _analyze_python_code(self, code: str):
-        """Analyze Python code using AST"""
+        """Analyze Python code using AST for three specific checks"""
         try:
             tree = ast.parse(code)
             
-            # Check each constraint
-            for rule_name, rule_config in self.constraints.get("constraints", {}).items():
-                if not rule_config.get("enabled", False):
-                    continue
-                
-                if rule_name == "no_global_vars":
-                    self._check_global_variables(tree, code, rule_config)
-                elif rule_name == "sanitize_inputs":
-                    self._check_input_sanitization(tree, code, rule_config)
-                elif rule_name == "disallow_raw_sql":
-                    self._check_raw_sql(tree, code, rule_config)
-                elif rule_name == "no_hardcoded_secrets":
-                    self._check_hardcoded_secrets(tree, code, rule_config)
-                elif rule_name == "require_error_handling":
-                    self._check_error_handling(tree, code, rule_config)
-                elif rule_name == "require_type_hints":
-                    self._check_type_hints(tree, code, rule_config)
+            # Check for global variables
+            self._check_global_variables(tree, code)
+            
+            # Check for input sanitization
+            self._check_input_sanitization(tree, code)
+            
+            # Check for function length
+            self._check_max_function_length(tree, code)
         
         except SyntaxError as e:
             # If code has syntax errors, add a violation
@@ -122,255 +64,196 @@ class ConstraintDebugger:
                 code_snippet=code.split('\n')[e.lineno - 1] if e.lineno else ""
             ))
     
-    def _check_global_variables(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
+    def _check_global_variables(self, tree: ast.AST, code: str):
         """Check for global variable declarations"""
+        lines = code.split('\n')
+        
+        # Check for top-level assignments (global variables)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Global):
-                line_num = node.lineno
-                line_content = code.split('\n')[line_num - 1] if line_num <= len(code.split('\n')) else ""
-                
-                self.violations.append(ConstraintViolation(
-                    rule="no_global_vars",
-                    line=line_num,
-                    column=node.col_offset,
-                    explanation=rule_config.get("message", "Global variable declaration found"),
-                    severity=rule_config.get("severity", "warning"),
-                    code_snippet=line_content.strip()
-                ))
+            if isinstance(node, ast.Assign):
+                # Check if this assignment is at module level (not inside a function/class)
+                if self._is_module_level(node, tree):
+                    line_num = node.lineno
+                    line_content = lines[line_num - 1] if line_num <= len(lines) else ""
+                    
+                    self.violations.append(ConstraintViolation(
+                        rule="no_global_vars",
+                        line=line_num,
+                        column=node.col_offset,
+                        explanation="Global variable declaration found. Global variables can cause hidden side effects and make code harder to test and maintain.",
+                        severity="warning",
+                        code_snippet=line_content.strip()
+                    ))
     
-    def _check_input_sanitization(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
+    def _is_module_level(self, node: ast.AST, tree: ast.AST) -> bool:
+        """Check if a node is at module level (not inside function/class)"""
+        for parent in ast.walk(tree):
+            if hasattr(parent, 'body'):
+                if node in parent.body:
+                    # If parent is a function or class, this is not module level
+                    if isinstance(parent, (ast.FunctionDef, ast.ClassDef)):
+                        return False
+                    # If parent is the module itself, this is module level
+                    elif isinstance(parent, ast.Module):
+                        return True
+        return True
+    
+    def _check_input_sanitization(self, tree: ast.AST, code: str):
         """Check for proper input sanitization"""
-        input_functions = ['input', 'raw_input', 'sys.stdin.read', 'sys.stdin.readline']
-        sanitization_functions = ['strip', 'escape', 'sanitize', 'validate', 'clean']
+        lines = code.split('\n')
         
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
-                # Check if it's an input function
-                if isinstance(node.func, ast.Name) and node.func.id in input_functions:
-                    # Check if the result is sanitized
+                # Check if it's an input function call
+                if isinstance(node.func, ast.Name) and node.func.id == 'input':
                     line_num = node.lineno
-                    line_content = code.split('\n')[line_num - 1] if line_num <= len(code.split('\n')) else ""
+                    line_content = lines[line_num - 1] if line_num <= len(lines) else ""
                     
-                    # Simple check: look for sanitization in the same line or nearby
-                    is_sanitized = any(func in line_content for func in sanitization_functions)
+                    # Check if the input is assigned to a variable and if it's sanitized
+                    # Look for patterns like: variable = input("prompt")
+                    # and check if the variable is later sanitized
+                    is_sanitized = self._check_input_sanitization_context(node, tree, lines)
                     
                     if not is_sanitized:
                         self.violations.append(ConstraintViolation(
                             rule="sanitize_inputs",
                             line=line_num,
                             column=node.col_offset,
-                            explanation=rule_config.get("message", "Input not properly sanitized"),
-                            severity=rule_config.get("severity", "error"),
+                            explanation="User input not properly sanitized. User inputs should be sanitized to prevent injection attacks and data corruption.",
+                            severity="error",
                             code_snippet=line_content.strip()
                         ))
     
-    def _check_raw_sql(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
-        """Check for raw SQL queries"""
-        sql_patterns = [
-            r'SELECT\s+.*FROM',
-            r'INSERT\s+INTO',
-            r'UPDATE\s+.*SET',
-            r'DELETE\s+FROM',
-            r'DROP\s+TABLE',
-            r'CREATE\s+TABLE'
-        ]
-        
-        lines = code.split('\n')
-        for i, line in enumerate(lines, 1):
-            for pattern in sql_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
-                    # Check if it's using parameterized queries
-                    if not any(param in line for param in ['%s', '?', ':', 'format(', 'f"']):
-                        self.violations.append(ConstraintViolation(
-                            rule="disallow_raw_sql",
-                            line=i,
-                            column=0,
-                            explanation=rule_config.get("message", "Raw SQL query detected without parameterization"),
-                            severity=rule_config.get("severity", "error"),
-                            code_snippet=line.strip()
-                        ))
+    def _check_input_sanitization_context(self, input_node: ast.Call, tree: ast.AST, lines: List[str]) -> bool:
+        """Check if input is properly sanitized in its context"""
+        # Look for the parent assignment
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                if input_node in ast.walk(node):
+                    # Check if the assigned variable is sanitized later
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            var_name = target.id
+                            # Look for sanitization of this variable
+                            return self._find_sanitization(var_name, tree, lines)
+        return False
     
-    def _check_hardcoded_secrets(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
-        """Check for hardcoded secrets"""
-        secret_patterns = [
-            r'password\s*=\s*["\'][^"\']+["\']',
-            r'api_key\s*=\s*["\'][^"\']+["\']',
-            r'secret\s*=\s*["\'][^"\']+["\']',
-            r'token\s*=\s*["\'][^"\']+["\']',
-            r'key\s*=\s*["\'][^"\']+["\']'
-        ]
+    def _find_sanitization(self, var_name: str, tree: ast.AST, lines: List[str]) -> bool:
+        """Find if a variable is sanitized"""
+        sanitization_methods = ['.strip()', '.lower()', '.upper()', '.replace(', 'escape', 'sanitize', 'validate']
         
-        lines = code.split('\n')
-        for i, line in enumerate(lines, 1):
-            for pattern in secret_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
-                    self.violations.append(ConstraintViolation(
-                        rule="no_hardcoded_secrets",
-                        line=i,
-                        column=0,
-                        explanation=rule_config.get("message", "Hardcoded secret detected"),
-                        severity=rule_config.get("severity", "error"),
-                        code_snippet=line.strip()
-                    ))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == var_name:
+                # Check if this variable is used in a sanitization context
+                line_num = node.lineno
+                if line_num <= len(lines):
+                    line_content = lines[line_num - 1]
+                    if any(method in line_content for method in sanitization_methods):
+                        return True
+        return False
     
-    def _check_error_handling(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
-        """Check for proper error handling"""
+    def _check_max_function_length(self, tree: ast.AST, code: str):
+        """Check for functions that exceed maximum length"""
+        lines = code.split('\n')
+        
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                has_try_except = False
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Try):
-                        has_try_except = True
-                        break
+                # Calculate function length using line numbers
+                function_start = node.lineno
                 
-                if not has_try_except and len(node.body) > 0:
-                    # Check if function has any risky operations
-                    has_risky_ops = False
-                    for child in ast.walk(node):
-                        if isinstance(child, (ast.Call, ast.Attribute)):
-                            has_risky_ops = True
-                            break
-                    
-                    if has_risky_ops:
-                        self.violations.append(ConstraintViolation(
-                            rule="require_error_handling",
-                            line=node.lineno,
-                            column=node.col_offset,
-                            explanation=rule_config.get("message", "Function lacks proper error handling"),
-                            severity=rule_config.get("severity", "warning"),
-                            code_snippet=code.split('\n')[node.lineno - 1].strip()
-                        ))
-    
-    def _check_type_hints(self, tree: ast.AST, code: str, rule_config: Dict[str, Any]):
-        """Check for type hints in function definitions"""
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                # Check if function has return type annotation
-                if node.returns is None:
+                # Find the last line of the function
+                function_end = self._get_function_end_line(node, lines)
+                function_length = function_end - function_start + 1
+                
+                if function_length > self.max_function_length:
                     self.violations.append(ConstraintViolation(
-                        rule="require_type_hints",
-                        line=node.lineno,
+                        rule="max_function_length",
+                        line=function_start,
                         column=node.col_offset,
-                        explanation=rule_config.get("message", "Function missing return type hint"),
-                        severity=rule_config.get("severity", "info"),
-                        code_snippet=code.split('\n')[node.lineno - 1].strip()
-                    ))
-                
-                # Check if parameters have type annotations
-                for arg in node.args.args:
-                    if arg.annotation is None:
-                        self.violations.append(ConstraintViolation(
-                            rule="require_type_hints",
-                            line=node.lineno,
-                            column=node.col_offset,
-                            explanation=rule_config.get("message", f"Parameter '{arg.arg}' missing type hint"),
-                            severity=rule_config.get("severity", "info"),
-                            code_snippet=code.split('\n')[node.lineno - 1].strip()
-                        ))
-    
-    def _analyze_javascript_code(self, code: str):
-        """Analyze JavaScript code using regex patterns"""
-        lines = code.split('\n')
-        
-        # Check for eval usage
-        for i, line in enumerate(lines, 1):
-            if 'eval(' in line:
-                self.violations.append(ConstraintViolation(
-                    rule="no_eval",
-                    line=i,
-                    column=line.find('eval('),
-                    explanation="eval() can execute arbitrary code and is a security risk",
-                    severity="error",
-                    code_snippet=line.strip()
-                ))
-    
-    def _analyze_typescript_code(self, code: str):
-        """Analyze TypeScript code (similar to JavaScript for now)"""
-        self._analyze_javascript_code(code)
-    
-    def _analyze_generic_code(self, code: str, language: str):
-        """Fallback analysis using regex patterns"""
-        lines = code.split('\n')
-        
-        # Generic patterns that might apply to multiple languages
-        patterns = {
-            'hardcoded_secrets': r'(password|api_key|secret|token)\s*=\s*["\'][^"\']+["\']',
-            'raw_sql': r'(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE)\s+.*',
-            'eval_usage': r'eval\s*\('
-        }
-        
-        for i, line in enumerate(lines, 1):
-            for pattern_name, pattern in patterns.items():
-                if re.search(pattern, line, re.IGNORECASE):
-                    self.violations.append(ConstraintViolation(
-                        rule=pattern_name,
-                        line=i,
-                        column=0,
-                        explanation=f"Potential {pattern_name.replace('_', ' ')} detected",
+                        explanation=f"Function '{node.name}' is {function_length} lines long, exceeding the maximum of {self.max_function_length} lines. Long functions are hard to maintain and should be broken into smaller functions.",
                         severity="warning",
-                        code_snippet=line.strip()
+                        code_snippet=f"def {node.name}(...):"
                     ))
     
-    def get_violations_summary(self) -> Dict[str, Any]:
-        """Get a summary of constraint violations"""
-        if not self.violations:
-            return {
-                "total_violations": 0,
-                "by_severity": {},
-                "by_rule": {},
-                "status": "compliant"
-            }
+    def _get_function_end_line(self, function_node: ast.FunctionDef, lines: List[str]) -> int:
+        """Get the last line number of a function"""
+        # Start with the function's own line number
+        last_line = function_node.lineno
         
-        by_severity = {}
-        by_rule = {}
+        # Walk through all nodes in the function to find the last line
+        for node in ast.walk(function_node):
+            if hasattr(node, 'lineno') and node.lineno > last_line:
+                last_line = node.lineno
         
-        for violation in self.violations:
-            # Count by severity
-            by_severity[violation.severity] = by_severity.get(violation.severity, 0) + 1
-            
-            # Count by rule
-            by_rule[violation.rule] = by_rule.get(violation.rule, 0) + 1
+        # If we couldn't find a better end line, estimate based on indentation
+        if last_line == function_node.lineno and function_node.body:
+            # Look for the last statement in the function body
+            last_stmt = function_node.body[-1]
+            if hasattr(last_stmt, 'lineno'):
+                last_line = last_stmt.lineno
         
-        # Determine overall status
-        if by_severity.get("error", 0) > 0:
-            status = "non_compliant"
-        elif by_severity.get("warning", 0) > 0:
-            status = "warnings"
-        else:
-            status = "compliant"
-        
-        return {
-            "total_violations": len(self.violations),
-            "by_severity": by_severity,
-            "by_rule": by_rule,
-            "status": status
-        }
+        return last_line
 
 # Example usage
 if __name__ == "__main__":
     debugger = ConstraintDebugger()
     
-    # Test with sample code
+    # Test with sample code that demonstrates all three checks
     test_code = """
 import os
 
+# Global variable (should trigger no_global_vars)
+global_config = {"api_key": "sk-1234567890"}
+
 def process_user_input():
+    # Unsanitized input (should trigger sanitize_inputs)
     user_data = input("Enter data: ")
     return user_data
 
-def connect_database():
-    password = "secret123"
-    query = "SELECT * FROM users WHERE id = " + user_id
-    return query
+def very_long_function():
+    # This function is intentionally long to trigger max_function_length
+    print("This is line 1")
+    print("This is line 2")
+    print("This is line 3")
+    print("This is line 4")
+    print("This is line 5")
+    print("This is line 6")
+    print("This is line 7")
+    print("This is line 8")
+    print("This is line 9")
+    print("This is line 10")
+    print("This is line 11")
+    print("This is line 12")
+    print("This is line 13")
+    print("This is line 14")
+    print("This is line 15")
+    print("This is line 16")
+    print("This is line 17")
+    print("This is line 18")
+    print("This is line 19")
+    print("This is line 20")
+    print("This is line 21")  # This should trigger the violation
+    return "done"
 
-global_var = "I'm global"
+def good_function():
+    # This function is short and should not trigger violations
+    sanitized_input = input("Enter data: ").strip()
+    return sanitized_input
 """
     
-    violations = debugger.analyze_code(test_code, "python")
+    violations = debugger.analyze_code(test_code)
     
-    print("Constraint Violations Found:")
-    for violation in violations:
-        print(f"  {violation.rule} (line {violation.line}): {violation.explanation}")
+    print("🔍 Constraint Violations Found:")
+    print("=" * 50)
     
-    summary = debugger.get_violations_summary()
-    print(f"\nSummary: {summary}")
+    if violations:
+        for violation in violations:
+            print(f"\n❌ Rule: {violation.rule}")
+            print(f"   Line: {violation.line}")
+            print(f"   Severity: {violation.severity}")
+            print(f"   Explanation: {violation.explanation}")
+            print(f"   Code: {violation.code_snippet}")
+    else:
+        print("✅ No constraint violations found!")
+    
+    print(f"\n📊 Total violations: {len(violations)}")
