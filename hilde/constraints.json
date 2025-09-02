@@ -1,0 +1,62 @@
+{
+  "constraints": {
+    "no_global_vars": {
+      "enabled": true,
+      "description": "Prevent global variable declarations",
+      "severity": "warning",
+      "message": "Global variables can cause hidden side effects and make code harder to test and maintain."
+    },
+    "sanitize_inputs": {
+      "enabled": true,
+      "description": "Ensure user inputs are properly sanitized",
+      "severity": "error",
+      "message": "User inputs should be sanitized to prevent injection attacks and data corruption."
+    },
+    "disallow_raw_sql": {
+      "enabled": true,
+      "description": "Prevent raw SQL queries without parameterization",
+      "severity": "error",
+      "message": "Raw SQL queries are vulnerable to SQL injection attacks. Use parameterized queries instead."
+    },
+    "no_hardcoded_secrets": {
+      "enabled": true,
+      "description": "Prevent hardcoded secrets and credentials",
+      "severity": "error",
+      "message": "Hardcoded secrets in source code are a security risk. Use environment variables or secure configuration."
+    },
+    "require_error_handling": {
+      "enabled": true,
+      "description": "Ensure proper error handling is implemented",
+      "severity": "warning",
+      "message": "Functions should include proper error handling to prevent unexpected crashes."
+    },
+    "no_direct_file_operations": {
+      "enabled": false,
+      "description": "Prevent direct file operations without proper validation",
+      "severity": "warning",
+      "message": "File operations should include proper path validation and error handling."
+    },
+    "require_type_hints": {
+      "enabled": false,
+      "description": "Require type hints for function parameters and return values",
+      "severity": "info",
+      "message": "Type hints improve code readability and enable better static analysis."
+    }
+  },
+  "language_specific": {
+    "python": {
+      "import_restrictions": {
+        "enabled": false,
+        "disallowed_imports": ["os.system", "subprocess.call", "eval", "exec"]
+      }
+    },
+    "javascript": {
+      "no_eval": {
+        "enabled": true,
+        "description": "Prevent use of eval() function",
+        "severity": "error",
+        "message": "eval() can execute arbitrary code and is a security risk."
+      }
+    }
+  }
+}
