@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """
-HiLDe-Lite API Gateway
-Flask server that orchestrates completion and analysis engines
-Optimized for Google Colab deployment
+HiLDe-Lite API Gateway - Streamlined Version
+Flask server that orchestrates the Generate → Analyze → Summarize workflow
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import threading
 import time
-import os
-import torch
 from typing import Dict, Any
 
 # Import our engines
@@ -122,25 +118,6 @@ class HiLDeLiteGateway:
             
         except Exception as e:
             return {"error": str(e)}
-    
-    def get_health_status(self) -> Dict[str, Any]:
-        """Get health status of the gateway"""
-        status = {
-            "status": "healthy" if self.initialized else "unhealthy",
-            "initialized": self.initialized,
-            "timestamp": time.time()
-        }
-        
-        if self.initialized:
-            status.update({
-                "completion_engine": "ready",
-                "analysis_engine": "ready" if self.analysis_engine.api_key else "no_api_key",
-                "constraint_debugger": "ready" if self.constraint_debugger else "not_initialized",
-                "gpu_available": torch.cuda.is_available(),
-                "memory_usage": self.completion_engine.get_memory_usage()
-            })
-        
-        return status
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -185,172 +162,28 @@ def hilde_completion():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify(gateway.get_health_status())
-
-@app.route('/demo', methods=['GET'])
-def demo():
-    """Demo endpoint with sample completion showing new workflow"""
-    sample_prompt = "def hash_password(password):"
+    status = {
+        "status": "healthy" if gateway.initialized else "unhealthy",
+        "initialized": gateway.initialized,
+        "timestamp": time.time()
+    }
     
-    try:
-        result = gateway.generate_completion(sample_prompt, 50, True)
-        
-        return jsonify({
-            'prompt': sample_prompt,
-            'workflow': 'Generate → Analyze → Summarize',
-            'result': result
+    if gateway.initialized:
+        status.update({
+            "completion_engine": "ready",
+            "analysis_engine": "ready" if gateway.analysis_engine.api_key else "no_api_key",
+            "constraint_debugger": "ready" if gateway.constraint_debugger else "not_initialized"
         })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/memory', methods=['GET'])
-def memory_usage():
-    """Get memory usage information"""
-    if gateway.initialized:
-        return jsonify(gateway.completion_engine.get_memory_usage())
-    else:
-        return jsonify({'error': 'Gateway not initialized'}), 500
-
-@app.route('/clear_cache', methods=['POST'])
-def clear_cache():
-    """Clear GPU cache to free memory"""
-    if gateway.initialized:
-        gateway.completion_engine.clear_cache()
-        return jsonify({'status': 'Cache cleared'})
-    else:
-        return jsonify({'error': 'Gateway not initialized'}), 500
-
-@app.route('/test', methods=['POST'])
-def test_endpoint():
-    """Test endpoint for quick validation of new workflow"""
-    data = request.get_json() or {}
-    test_prompt = data.get('prompt', 'def test_function():')
     
-    try:
-        result = gateway.generate_completion(test_prompt, 30, True)
-        
-        return jsonify({
-            'test_prompt': test_prompt,
-            'success': 'error' not in result,
-            'completion_length': len(result.get('completion', '')),
-            'violations_count': len(result.get('constraint_violations', [])),
-            'has_summary': bool(result.get('summary', '')),
-            'workflow': 'Generate → Analyze → Summarize',
-            'result': result
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify(status)
 
 def run_server(host='0.0.0.0', port=5000, debug=False):
     """Run the Flask server"""
     print(f"🌐 Starting HiLDe-Lite server on {host}:{port}")
     print(f"📡 Health check: http://{host}:{port}/health")
-    print(f"🎯 Demo: http://{host}:{port}/demo")
     print(f"🔧 Main endpoint: POST http://{host}:{port}/hilde/completion")
     
     app.run(host=host, port=port, debug=debug, use_reloader=False)
 
-# Colab-specific setup
-def setup_for_colab():
-    """Setup function specifically for Google Colab"""
-    print("🔧 Setting up HiLDe-Lite for Google Colab...")
-    
-    # Check if we're in Colab
-    try:
-        import google.colab
-        print("✅ Running in Google Colab")
-        
-        # Set up ngrok for external access (optional)
-        try:
-            from pyngrok import ngrok
-            print("📡 Setting up ngrok tunnel...")
-            public_url = ngrok.connect(5000)
-            print(f"🌍 Public URL: {public_url}")
-        except ImportError:
-            print("💡 Install pyngrok for public access: !pip install pyngrok")
-        
-    except ImportError:
-        print("💻 Running locally (not in Colab)")
-    
-    # Start server in background thread
-    server_thread = threading.Thread(target=run_server, args=('0.0.0.0', 5000, False))
-    server_thread.daemon = True
-    server_thread.start()
-    
-    # Wait for server to start
-    time.sleep(3)
-    
-    print("🚀 HiLDe-Lite is ready!")
-    print("📝 Use the test functions below to interact with the API")
-
-# Example usage and testing functions
-def test_completion(prompt: str = "def hash_password(password):"):
-    """Test completion with new Generate → Analyze → Summarize workflow"""
-    import requests
-    
-    try:
-        response = requests.post('http://localhost:5000/hilde/completion', 
-                               json={
-                                   'prompt': prompt,
-                                   'max_tokens': 80,
-                                   'enable_analysis': True
-                               })
-        
-        if response.status_code == 200:
-            result = response.json()
-            
-            print(f"🎯 Results for: '{prompt}'")
-            print(f"📝 Completion: {result['completion']}")
-            print(f"🔍 Constraint violations: {len(result['constraint_violations'])} found")
-            print(f"📋 Summary: {result['summary']}")
-            
-            # Show violations if any
-            if result['constraint_violations']:
-                print(f"\n🚨 Violations Details:")
-                for i, violation in enumerate(result['constraint_violations'], 1):
-                    severity_emoji = "🔴" if violation['severity'] == "error" else "🟡" if violation['severity'] == "warning" else "🔵"
-                    print(f"  {i}. {severity_emoji} {violation['rule']} (Line {violation['line']}): {violation['explanation']}")
-            
-            return result
-        else:
-            print(f"❌ Request failed: {response.status_code}")
-            print(response.text)
-            return None
-            
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return None
-
-def test_multiple_prompts():
-    """Test multiple prompts with new workflow"""
-    test_prompts = [
-        "def hash_password(password):",
-        "global_config = {'api_key': 'secret'}",
-        "def process_user_input():",
-        "def very_long_function():",
-        "def good_function():"
-    ]
-    
-    print("🧪 Testing multiple prompts with Generate → Analyze → Summarize workflow:")
-    print("=" * 70)
-    
-    for prompt in test_prompts:
-        test_completion(prompt)
-        print("\n" + "-" * 40 + "\n")
-
 if __name__ == "__main__":
-    # Setup for Colab
-    setup_for_colab()
-    
-    # Run some tests
-    print("\n🧪 Running tests...")
-    test_completion()
-    
-    # Keep the main thread alive
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Shutting down HiLDe-Lite...")
+    run_server()

@@ -109,18 +109,3 @@ class HiLDeCompletionEngine:
         except Exception as e:
             print(f"❌ Generation error: {e}")
             return ""
-    
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Initialize the completion engine
-    engine = HiLDeCompletionEngine()
-    
-    # Test with a sample prompt
-    test_prompt = "def hash_password(password):"
-    
-    print(f"\n🧪 Testing with prompt: '{test_prompt}'")
-    completion = engine.generate_completion(test_prompt, max_tokens=50)
-    
-    print(f"\n📝 Generated completion: {completion}")
